@@ -6,10 +6,11 @@ import tensorflow as tf
 import tempfile
 import time
 import json
+import cv2
 
 import baselines.common.tf_util as U
 
-from baselines import logger
+from baselines import logger, logger_utils
 from baselines import deepq
 from baselines.deepq.replay_buffer import ReplayBuffer, PrioritizedReplayBuffer
 from baselines.common.misc_util import (
@@ -26,8 +27,10 @@ from baselines.common.schedules import LinearSchedule, PiecewiseSchedule
 # copy over LazyFrames
 from baselines.common.atari_wrappers_deprecated import wrap_dqn
 from baselines.common.azure_utils import Container
-from .model import model, dueling_model
+from baselines.deepq.experiments.atari.model import model, dueling_model
+from gameState import frame_step,setDsInFocus
 
+ACTIONS = 7
 
 def parse_args():
     parser = argparse.ArgumentParser("DQN experiments for Atari games")
@@ -35,11 +38,11 @@ def parse_args():
     parser.add_argument("--env", type=str, default="Pong", help="name of the game")
     parser.add_argument("--seed", type=int, default=42, help="which seed to use")
     # Core DQN parameters
-    parser.add_argument("--replay-buffer-size", type=int, default=int(1e6), help="replay buffer size")
+    parser.add_argument("--replay-buffer-size", type=int, default=int(50000), help="replay buffer size")
     parser.add_argument("--lr", type=float, default=1e-4, help="learning rate for Adam optimizer")
     parser.add_argument("--num-steps", type=int, default=int(2e8), help="total number of steps to run the environment for")
-    parser.add_argument("--batch-size", type=int, default=32, help="number of transitions to optimize at the same time")
-    parser.add_argument("--learning-freq", type=int, default=4, help="number of iterations between every optimization step")
+    parser.add_argument("--batch-size", type=int, default=16, help="number of transitions to optimize at the same time")
+    parser.add_argument("--learning-freq", type=int, default=1, help="number of iterations between every optimization step")
     parser.add_argument("--target-update-freq", type=int, default=40000, help="number of iterations between every target network update")
     parser.add_argument("--param-noise-update-freq", type=int, default=50, help="number of iterations between every re-scaling of the parameter noise")
     parser.add_argument("--param-noise-reset-freq", type=int, default=10000, help="maximum number of steps to take per episode before re-perturbing the exploration policy")
@@ -54,19 +57,20 @@ def parse_args():
     parser.add_argument("--prioritized-beta0", type=float, default=0.4, help="initial value of beta parameters for prioritized replay")
     parser.add_argument("--prioritized-eps", type=float, default=1e-6, help="eps parameter for prioritized replay buffer")
     # Checkpointing
-    parser.add_argument("--save-dir", type=str, default=None, help="directory in which training state and model should be saved.")
+    parser.add_argument("--overwrite-load-dir", type=str, default=None, help="directory to force load model from and continue training")
+    parser.add_argument("--save-dir", type=str, default="D:\openAi", help="directory in which training state and model should be saved.")
     parser.add_argument("--save-azure-container", type=str, default=None,
                         help="It present data will saved/loaded from Azure. Should be in format ACCOUNT_NAME:ACCOUNT_KEY:CONTAINER")
-    parser.add_argument("--save-freq", type=int, default=1e6, help="save model once every time this many iterations are completed")
+    parser.add_argument("--save-freq", type=int, default=1e5, help="save model once every time this many iterations are completed")
     boolean_flag(parser, "load-on-start", default=True, help="if true and model was previously saved then training will be resumed")
     return parser.parse_args()
 
 
-def make_env(game_name):
-    env = gym.make(game_name + "NoFrameskip-v4")
-    monitored_env = SimpleMonitor(env)  # puts rewards and number of steps in info, before environment is wrapped
-    env = wrap_dqn(monitored_env)  # applies a bunch of modification to simplify the observation space (downsample, make b/w)
-    return env, monitored_env
+# def make_env(game_name):
+#     env = gym.make(game_name + "NoFrameskip-v4")
+#     monitored_env = SimpleMonitor(env)  # puts rewards and number of steps in info, before environment is wrapped
+#     env = wrap_dqn(monitored_env)  # applies a bunch of modification to simplify the observation space (downsample, make b/w)
+#     return env, monitored_env
 
 
 def maybe_save_model(savedir, container, state):
@@ -110,7 +114,19 @@ def maybe_load_model(savedir, container):
 
 if __name__ == '__main__':
     args = parse_args()
-    
+    force_load_path = args.overwrite_load_dir
+    if force_load_path is None:
+        # Initialize logger
+        logger.reset()
+        logger_path = logger_utils.path_with_date(args.save_dir, args.env)
+        logger.configure(logger_path, ["tensorboard", "stdout"])
+        logger_utils.log_call_parameters(logger_path, args)
+        savedir = logger_path
+    else:
+        print("FORCE load dir and continue training at {}".format(force_load_path))
+        logger.configure(force_load_path, ["tensorboard", "stdout"])
+        savedir = force_load_path
+
     # Parse savedir and azure container.
     savedir = args.save_dir
     if savedir is None:
@@ -126,14 +142,15 @@ if __name__ == '__main__':
             savedir = tempfile.TemporaryDirectory().name
     else:
         container = None
+    print("Savedir:",savedir)
     # Create and seed the env.
-    env, monitored_env = make_env(args.env)
+    #env, monitored_env = make_env(args.env)
     if args.seed > 0:
         set_global_seeds(args.seed)
-        env.unwrapped.seed(args.seed)
+        #env.unwrapped.seed(args.seed)
 
-    if args.gym_monitor and savedir:
-        env = gym.wrappers.Monitor(env, os.path.join(savedir, 'gym_monitor'), force=True)
+    # if args.gym_monitor and savedir:
+    #     env = gym.wrappers.Monitor(env, os.path.join(savedir, 'gym_monitor'), force=True)
 
     if savedir:
         with open(os.path.join(savedir, 'args.json'), 'w') as f:
@@ -145,9 +162,9 @@ if __name__ == '__main__':
             actual_model = dueling_model if args.dueling else model
             return actual_model(img_in, num_actions, scope, layer_norm=args.layer_norm, **kwargs)
         act, train, update_target, debug = deepq.build_train(
-            make_obs_ph=lambda name: U.Uint8Input(env.observation_space.shape, name=name),
+            make_obs_ph=lambda name: U.Uint8Input((210, 160, 3), name=name),
             q_func=model_wrapper,
-            num_actions=env.action_space.n,
+            num_actions=ACTIONS,
             optimizer=tf.train.AdamOptimizer(learning_rate=args.lr, epsilon=1e-4),
             gamma=0.99,
             grad_norm_clipping=10,
@@ -176,19 +193,25 @@ if __name__ == '__main__':
         state = maybe_load_model(savedir, container)
         if state is not None:
             num_iters, replay_buffer = state["num_iters"], state["replay_buffer"],
-            monitored_env.set_state(state["monitor_state"])
+            #monitored_env.set_state(state["monitor_state"])
 
         start_time, start_steps = None, None
         steps_per_iter = RunningAvg(0.999)
         iteration_time_est = RunningAvg(0.999)
-        obs = env.reset()
+        obs,rew,done = frame_step(0)
+        obs=cv2.resize(obs, (160,210))
         num_iters_since_reset = 0
         reset = True
+        info={"steps":0,"rewards":[]}
+
+        reward_since_reset=0
 
         # Main trianing loop
         while True:
             num_iters += 1
             num_iters_since_reset += 1
+            info['steps']=num_iters           
+            #print(num_iters)
 
             # Take action and store transition in the replay buffer.
             kwargs = {}
@@ -205,19 +228,24 @@ if __name__ == '__main__':
                 # policy is comparable to eps-greedy exploration with eps = exploration.value(t).
                 # See Appendix C.1 in Parameter Space Noise for Exploration, Plappert et al., 2017
                 # for detailed explanation.
-                update_param_noise_threshold = -np.log(1. - exploration.value(num_iters) + exploration.value(num_iters) / float(env.action_space.n))
+                update_param_noise_threshold = -np.log(1. - exploration.value(num_iters) + exploration.value(num_iters) / float(ACTIONS))
                 kwargs['reset'] = reset
                 kwargs['update_param_noise_threshold'] = update_param_noise_threshold
                 kwargs['update_param_noise_scale'] = (num_iters % args.param_noise_update_freq == 0)
 
             action = act(np.array(obs)[None], update_eps=update_eps, **kwargs)[0]
             reset = False
-            new_obs, rew, done, info = env.step(action)
+            new_obs, rew, done = frame_step(action)
+            new_obs=cv2.resize(new_obs, (160,210))
+            reward_since_reset+=rew
             replay_buffer.add(obs, action, rew, new_obs, float(done))
             obs = new_obs
             if done:
                 num_iters_since_reset = 0
-                obs = env.reset()
+                info["rewards"].append(reward_since_reset)
+                reward_since_reset=0
+                obs,rew,_ = frame_step(0)
+                obs=cv2.resize(obs, (160,210))
                 reset = True
 
             if (num_iters > max(5 * args.batch_size, args.replay_buffer_size // 20) and
@@ -249,13 +277,14 @@ if __name__ == '__main__':
                 maybe_save_model(savedir, container, {
                     'replay_buffer': replay_buffer,
                     'num_iters': num_iters,
-                    'monitor_state': monitored_env.get_state(),
+                    #'monitor_state': monitored_env.get_state(),
                 })
 
             if info["steps"] > args.num_steps:
                 break
 
             if done:
+                print("Inside done")
                 steps_left = args.num_steps - info["steps"]
                 completion = np.round(info["steps"] / args.num_steps, 1)
 
