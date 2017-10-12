@@ -22,8 +22,10 @@ L=0x26
 SPACE=0x39
 NUM1=0x4F
 NUM2=0x50
+NUM4=0x4B
 F1=0x3B
 F2=0x3C
+F3=0x3D
 
 # C struct redefinitions 
 PUL = ctypes.POINTER(ctypes.c_ulong)

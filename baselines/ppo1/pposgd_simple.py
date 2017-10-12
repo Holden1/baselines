@@ -7,12 +7,13 @@ from baselines.common.mpi_adam import MpiAdam
 from baselines.common.mpi_moments import mpi_moments
 from mpi4py import MPI
 from collections import deque
+from gym import spaces
 
 def traj_segment_generator(pi, env, horizon, stochastic):
     t = 0
-    ac = env.action_space.sample() # not used, just so we have the datatype
+    ac = 0 # not used, just so we have the datatype
     new = True # marks if we're on first timestep of an episode
-    ob = env.reset()
+    ob = env.frame_step(ac)
 
     cur_ep_ret = 0 # return in current episode
     cur_ep_len = 0 # len of current episode
@@ -29,7 +30,7 @@ def traj_segment_generator(pi, env, horizon, stochastic):
 
     while True:
         prevac = ac
-        ac, vpred = pi.act(stochastic, ob)
+        ac, vpred = pi.act(stochastic, [ob]uw)
         # Slight weirdness here because we need value function at time T
         # before returning segment [0, T-1] so we get the correct
         # terminal value
@@ -48,7 +49,7 @@ def traj_segment_generator(pi, env, horizon, stochastic):
         acs[i] = ac
         prevacs[i] = prevac
 
-        ob, rew, new, _ = env.step(ac)
+        ob, rew, new, _ = env.frame_step(ac)
         rews[i] = rew
 
         cur_ep_ret += rew
@@ -58,7 +59,10 @@ def traj_segment_generator(pi, env, horizon, stochastic):
             ep_lens.append(cur_ep_len)
             cur_ep_ret = 0
             cur_ep_len = 0
-            ob = env.reset()
+            while not env.can_reset():
+                time.sleep(1)
+            time.sleep(10)
+            env.reset()
         t += 1
 
 def add_vtarg_and_adv(seg, gamma, lam):
@@ -89,8 +93,8 @@ def learn(env, policy_func, *,
         ):
     # Setup losses and stuff
     # ----------------------------------------
-    ob_space = env.observation_space
-    ac_space = env.action_space
+    ob_space = spaces.Box(0,255,(84,84,4))
+    ac_space = spaces.Discrete(9)
     pi = policy_func("pi", ob_space, ac_space) # Construct network for new policy
     oldpi = policy_func("oldpi", ob_space, ac_space) # Network for old policy
     atarg = tf.placeholder(dtype=tf.float32, shape=[None]) # Target advantage function (if applicable)

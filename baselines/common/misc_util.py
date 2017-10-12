@@ -6,7 +6,7 @@ import random
 import tempfile
 import time
 import zipfile
-
+import gc
 
 def zipsame(*seqs):
     L = len(seqs[0])
@@ -293,14 +293,19 @@ def relatively_safe_pickle_dump(obj, path, compression=False):
     temp_storage = path + ".relatively_safe"
     if compression:
         # Using gzip here would be simpler, but the size is limited to 2GB
-        with tempfile.NamedTemporaryFile() as uncompressed_file:
-            pickle.dump(obj, uncompressed_file)
-            with zipfile.ZipFile(temp_storage, "w", compression=zipfile.ZIP_DEFLATED) as myzip:
-                myzip.write(uncompressed_file.name, "data")
+        uncompressed_file=open(path+"temp","w+b")
+        gc.disable()
+        pickle.dump(obj, uncompressed_file)
+        gc.enable()
+        with zipfile.ZipFile(temp_storage, "w", compression=zipfile.ZIP_DEFLATED) as myzip:
+            myzip.write(uncompressed_file.name, "data")
+        uncompressed_file.close()
+        os.remove(uncompressed_file.name)
     else:
         with open(temp_storage, "wb") as f:
             pickle.dump(obj, f)
-    os.rename(temp_storage, path)
+    os.replace(temp_storage, path)
+
 
 
 def pickle_load(path, compression=False):
@@ -322,7 +327,13 @@ def pickle_load(path, compression=False):
     if compression:
         with zipfile.ZipFile(path, "r", compression=zipfile.ZIP_DEFLATED) as myzip:
             with myzip.open("data") as f:
-                return pickle.load(f)
+                gc.disable()
+                val=pickle.load(f)
+                gc.enable()
+                return val
     else:
         with open(path, "rb") as f:
-            return pickle.load(f)
+            gc.disable()
+            val=pickle.load(f)
+            gc.enable()
+            return val
