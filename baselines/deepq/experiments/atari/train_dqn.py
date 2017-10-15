@@ -230,7 +230,7 @@ if __name__ == '__main__':
             actual_model = dueling_model if args.dueling else model
             return actual_model(img_in, num_actions, scope, layer_norm=args.layer_norm, **kwargs)
         act, train, update_target, debug = deepq.build_train(
-            make_obs_ph=lambda name: U.Uint8Input((4,84, 84), name=name),
+            make_obs_ph=lambda name: U.Uint8Input((84, 84,4), name=name),
             q_func=model_wrapper,
             num_actions=ACTIONS,
             optimizer=tf.train.AdamOptimizer(learning_rate=args.lr, epsilon=1e-4),
@@ -244,8 +244,8 @@ if __name__ == '__main__':
         exploration = PiecewiseSchedule([
             (0, 1.0),
             (approximate_num_iters / 50, 0.1),
-            (approximate_num_iters / 5, 0.01)
-        ], outside_value=0.1) #final eps
+            (approximate_num_iters / 5, 0.1)
+        ], outside_value=0.01) #final eps
 
         if args.prioritized:
             replay_buffer = PrioritizedReplayBuffer(args.replay_buffer_size, args.prioritized_alpha)

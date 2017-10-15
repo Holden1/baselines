@@ -1,4 +1,4 @@
-from baselines.common import Dataset, explained_variance, fmt_row, zipsame
+from baselines.common import Dataset, explained_variance, fmt_row, zipsame, os
 from baselines import logger
 import baselines.common.tf_util as U
 import tensorflow as tf, numpy as np
@@ -8,13 +8,15 @@ from baselines.common.mpi_moments import mpi_moments
 from mpi4py import MPI
 from collections import deque
 from gym import spaces
+from pathlib import Path
+
 
 def traj_segment_generator(pi, env, horizon, stochastic):
     t = 0
     ac = 0 # not used, just so we have the datatype
     new = True # marks if we're on first timestep of an episode
-    ob = env.frame_step(ac)
-
+    ob,_,_ = env.frame_step(ac)
+    ob=np.reshape(ob,(84,84,4))
     cur_ep_ret = 0 # return in current episode
     cur_ep_len = 0 # len of current episode
     ep_rets = [] # returns of completed episodes in this segment
@@ -30,7 +32,7 @@ def traj_segment_generator(pi, env, horizon, stochastic):
 
     while True:
         prevac = ac
-        ac, vpred = pi.act(stochastic, [ob]uw)
+        ac, vpred = pi.act(stochastic, [ob])
         # Slight weirdness here because we need value function at time T
         # before returning segment [0, T-1] so we get the correct
         # terminal value
@@ -49,7 +51,8 @@ def traj_segment_generator(pi, env, horizon, stochastic):
         acs[i] = ac
         prevacs[i] = prevac
 
-        ob, rew, new, _ = env.frame_step(ac)
+        ob, rew, new = env.frame_step(ac)
+        ob = np.reshape(ob, (84, 84, 4))
         rews[i] = rew
 
         cur_ep_ret += rew
@@ -61,7 +64,6 @@ def traj_segment_generator(pi, env, horizon, stochastic):
             cur_ep_len = 0
             while not env.can_reset():
                 time.sleep(1)
-            time.sleep(10)
             env.reset()
         t += 1
 
@@ -91,6 +93,12 @@ def learn(env, policy_func, *,
         adam_epsilon=1e-5,
         schedule='constant' # annealing for stepsize parameters (epsilon and adam)
         ):
+
+    #logger setup
+    log_dir = os.path.join(str(Path.home()), "Desktop", "Darksouls" + "ppo",str(time.time()))
+    logger.reset()
+    logger.configure(log_dir, ["tensorboard", "stdout"])
+
     # Setup losses and stuff
     # ----------------------------------------
     ob_space = spaces.Box(0,255,(84,84,4))
@@ -164,8 +172,10 @@ def learn(env, policy_func, *,
             raise NotImplementedError
 
         logger.log("********** Iteration %i ************"%iters_so_far)
-
+        env.unpause_wrapper()
         seg = seg_gen.__next__()
+        print("Pause for training")
+        env.pause_wrapper()
         add_vtarg_and_adv(seg, gamma, lam)
 
         # ob, ac, atarg, ret, td1ret = map(np.concatenate, (obs, acs, atargs, rets, td1rets))

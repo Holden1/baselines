@@ -1,6 +1,7 @@
 from collections import deque
 
 import numpy as np
+from baselines.common.atari_wrappers_deprecated import LazyFrames
 from grabber import Grabber
 import cv2
 import time
@@ -14,6 +15,7 @@ import subprocess
 
 BOSSAREA=400100
 BONFIREAREA=400101
+FRAME_DIFF=0.02
 
 iterations=0
 start_time=-1
@@ -158,7 +160,7 @@ class dsgym:
         reward=0
 
         #stupid python
-        global start_time
+
         global bossHpLastFrame
         global charHpLastFrame
         global iterations
@@ -239,35 +241,12 @@ class dsgym:
             #PressKey(P)
             #ReleaseKey(P)
 
-
-        #Sleep to ensure consistency in frames
-        if start_time!=-1:
-            elapsed=time.time() - start_time
-            #print(elapsed)
-            timeToSleep=0.02-elapsed
-            if timeToSleep>0:
-                time.sleep(timeToSleep)
-                #print("New elapsed ",time.time()-start_time)
-
-        grabber = Grabber(bbox=(8, 40, 808, 450))
-        screen = grabber.grab()
-        start_time = time.time()
-        grayscale_small=cv2.cvtColor(cv2.resize(screen, (84 , 84),interpolation = cv2.INTER_AREA), cv2.COLOR_RGB2GRAY)
-        #millis = int(round(time.time() * 1000))
-        #cv2.imwrite('images/'+str(millis)+'rgb.png', grayscale_small)
-
-
-
-        #if nothing in frame buffer, fill it with this frame
-        if self.fill_frame_buffer:
-            for _ in range(4):
-                self.frames.append(grayscale_small)
-            self.fill_frame_buffer=False
-        else:
-            self.frames.append(grayscale_small)
+        self.add_frames(1)
 
         if terminal:
             self.fill_frame_buffer=True #Fill buffer next time, if we died
+
+
 
 
         bossHpLastFrame=ludexHp
@@ -275,7 +254,7 @@ class dsgym:
 
         
 
-        return self.frames, reward, terminal
+        return LazyFrames(list(self.frames)), reward, terminal
 
     def releaseAll(self):
         ReleaseKey(P)
@@ -288,3 +267,31 @@ class dsgym:
         ReleaseKey(NUM1)
         ReleaseKey(NUM2)
         ReleaseKey(NUM4)
+
+    def add_frames(self,num_frames):
+        global start_time
+        for i in range(num_frames):
+            # Sleep to ensure consistency in frames
+            if start_time != -1:
+                elapsed = time.time() - start_time
+                # print(elapsed)
+                timeToSleep = FRAME_DIFF - elapsed
+                if timeToSleep > 0:
+                    time.sleep(timeToSleep)
+                    # print("New elapsed ",time.time()-start_time)
+
+            grabber = Grabber(bbox=(8, 40, 808, 450))
+            screen = grabber.grab()
+            start_time = time.time()
+            grayscale_small = cv2.cvtColor(cv2.resize(screen, (84, 84), interpolation=cv2.INTER_AREA), cv2.COLOR_RGB2GRAY)
+            # millis = int(round(time.time() * 1000))
+            # cv2.imwrite('images/'+str(millis)+'grey.png', grayscale_small)
+            # if nothing in frame buffer, fill it with this frame
+
+            grayscale_small=np.reshape(grayscale_small, [84, 84, 1])
+            if self.fill_frame_buffer:
+                for _ in range(4):
+                    self.frames.append(grayscale_small)
+                self.fill_frame_buffer = False
+            else:
+                self.frames.append(grayscale_small)
