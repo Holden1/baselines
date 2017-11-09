@@ -30,7 +30,7 @@ def model(img_in, num_actions, scope, reuse=False, layer_norm=False):
         return value_out
 
 
-def dueling_model(img_in, num_actions, scope, reuse=False, layer_norm=False):
+def dueling_model(img_in,features, num_actions, scope, reuse=False, layer_norm=False):
     """As described in https://arxiv.org/abs/1511.06581"""
     with tf.variable_scope(scope, reuse=reuse):
         out = img_in
@@ -40,6 +40,7 @@ def dueling_model(img_in, num_actions, scope, reuse=False, layer_norm=False):
             out = layers.convolution2d(out, num_outputs=64, kernel_size=4, stride=2, activation_fn=tf.nn.relu)
             out = layers.convolution2d(out, num_outputs=64, kernel_size=3, stride=1, activation_fn=tf.nn.relu)
         conv_out = layers.flatten(out)
+        conv_out=tf.concat([conv_out,features],1)
 
         with tf.variable_scope("state_value"):
             state_hidden = layers.fully_connected(conv_out, num_outputs=512, activation_fn=None)

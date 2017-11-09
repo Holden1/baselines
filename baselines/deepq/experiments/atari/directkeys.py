@@ -19,6 +19,7 @@ E=0x12
 Q=0x10
 T=0x14
 L=0x26
+I=0x17
 SPACE=0x39
 NUM1=0x4F
 NUM2=0x50
@@ -26,6 +27,7 @@ NUM4=0x4B
 F1=0x3B
 F2=0x3C
 F3=0x3D
+I
 
 # C struct redefinitions 
 PUL = ctypes.POINTER(ctypes.c_ulong)
@@ -62,6 +64,10 @@ class Input(ctypes.Structure):
 def PressAndRelease(hexKeyCode):
     PressKey(hexKeyCode)
     time.sleep(1)
+    ReleaseKey(hexKeyCode)
+def PressAndFastRelease(hexKeyCode):
+    PressKey(hexKeyCode)
+    time.sleep(0.1)
     ReleaseKey(hexKeyCode)
 
 def PressKey(hexKeyCode):

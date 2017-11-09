@@ -1,5 +1,7 @@
 #!/usr/bin/env python
+import sys
 
+import time
 from mpi4py import MPI
 from baselines.common import set_global_seeds
 from baselines import bench
@@ -27,15 +29,21 @@ def train(env_id, num_frames, seed):
         return cnn_policy.CnnPolicy(name=name, ob_space=ob_space, ac_space=ac_space)
     gym.logger.setLevel(logging.WARN)
     num_timesteps = int(num_frames / 4 * 1.1)
-
-    pposgd_simple.learn(dsgym(), policy_fn,
-        max_timesteps=num_timesteps,
-        timesteps_per_batch=256,
-        clip_param=0.2, entcoeff=0.01,
-        optim_epochs=4, optim_stepsize=1e-3, optim_batchsize=64,
-        gamma=0.99, lam=0.95,
-        schedule='linear'
-    )
+    try:
+        pposgd_simple.learn(dsgym(), policy_fn,
+            max_timesteps=num_timesteps,
+            timesteps_per_batch=256,
+            clip_param=0.2, entcoeff=0.01,
+            optim_epochs=4, optim_stepsize=1e-3, optim_batchsize=64,
+            gamma=0.99, lam=0.95,
+            schedule='linear'
+        )
+    except KeyboardInterrupt:
+        print("Saving on keyinterrupt")
+        U.save_state("D:/openAi/ppo/" +str(time.time())+ "/saved_model")
+        # quit
+        sys.exit()
+    U.save_state("D:/openAi/ppo/" +str(time.time()) + "/saved_model")
 
 def main():
     import argparse

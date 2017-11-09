@@ -1,17 +1,20 @@
 from collections import deque
 
 import numpy as np
+import win32ui
 from baselines.common.atari_wrappers_deprecated import LazyFrames
 from grabber import Grabber
 import cv2
 import time
 import os
 import sys
-from directkeys import W,A,S,D,P,U,E,Q,T,L,F1,F2,F3,NUM1,NUM2,NUM4,SPACE,PressKey,ReleaseKey,PressAndRelease
+from directkeys import W,A,S,D,P,U,E,Q,T,L,I,F1,F2,F3,NUM1,NUM2,NUM4,SPACE,PressKey,ReleaseKey,PressAndRelease,PressAndFastRelease
 from numpy import genfromtxt
 from windowMgr import WindowMgr
 import os
 import subprocess
+import threading
+
 
 BOSSAREA=400100
 BONFIREAREA=400101
@@ -21,16 +24,21 @@ iterations=0
 start_time=-1
 bossHpLastFrame=sys.maxsize
 charHpLastFrame=-sys.maxsize
+not_responding_lock=threading.Lock()
 
 class dsgym:
     def __init__(self):
         self.frames = deque([], maxlen=4)
+        self.prev_actions = deque([], maxlen=4)
+
         self.fill_frame_buffer=True
+        self.spawnCheckRespondingThread()
 
     def pause_wrapper(self):
         PressAndRelease(P)
-
-    def unpause_wrapper(self):
+    def speed_up_wrapper(self):
+        PressAndRelease(I)
+    def normal_speed_wrapper(self):
         PressAndRelease(U)
 
     def notresponding(self,name):
@@ -58,59 +66,74 @@ class dsgym:
             w.set_foreground()
         except:
             print("Had issues setting to foreground")
+    def spawnCheckRespondingThread(self):
+        thread = threading.Thread(target=self.CheckAndHandleNotResponding, args=())
+        thread.daemon = True  # Daemonize thread
+        thread.start()  # Start the execution
 
-    def CheckAndHandleNotResponding(self):
-        #Cheat engine might not be responding if it fails to attach debugger
-        if(self.notresponding("cheatengine-x86_64.exe")):
-            self.releaseAll()
-            os.system("taskkill /f /im  cheatengine-x86_64.exe /T")
-            os.system('".\\DarkSoulsIII.CT"')
-            time.sleep(5)
-            PressAndRelease(T)
-            self.setDsInFocus()
-        if(self.notresponding("DarkSoulsIII.exe")):
-            self.releaseAll()
-            print("Game not responding, waiting 5 seconds until restart")
-            time.sleep(5)
-            PressAndRelease(U)
-            if  self.notresponding("DarkSoulsIII.exe"):
-                self.kill_processes()
-                os.system('".\\DarkSoulsIII.CT"')
-                time.sleep(5)
-                os.system('"C:\Program Files (x86)\Steam\steamapps\common\DARK SOULS III\Game\DarkSoulsIII.exe"')
-                w=WindowMgr()         
-                time.sleep(40)
-                PressAndRelease(T)
-                w.find_window_wildcard(".*ARK SOULS.*")
-                iter=0
-                while iter<100:
-                    try:
-                        w.set_foreground()
-                    except:
-                        print("Had issues setting to foreground")
-
-                    print("Spamming E to get into game",iter)
-                    PressAndRelease(E)
-                    iter+=1
-                    [ludexHp,charHp,stamina,area,targetLock]=self.readState()
-
-                    if(area==BONFIREAREA):
-                        iter=100 #we are in game
-                
-                time.sleep(5)
-                print("Assuming in game now")
-                ReleaseKey(E)
-                #Set terminal true, this makes us tele to boss
-                return True
-        else:
+    def window_exists(self,window_name):
+        try:
+            win32ui.FindWindow(None, window_name)
+            return True
+        except win32ui.error:
             return False
+    def CheckAndHandleNotResponding(self):
+        while True:
+            #Cheat engine might not be responding if it fails to attach debugger
+            if(self.notresponding("cheatengine-x86_64.exe") or self.window_exists("Lua Engine")):
+                with not_responding_lock:
+                    self.releaseAll()
+                    os.system("taskkill /f /im  cheatengine-x86_64.exe /T")
+                    os.system('".\\DarkSoulsIII.CT"')
+                    time.sleep(5)
+                    PressAndRelease(T)
+                    PressAndRelease(T)
+                    self.setDsInFocus()
+            if(self.notresponding("DarkSoulsIII.exe") or self.window_exists("Error")):
+                with not_responding_lock:
+                    self.releaseAll()
+                    print("Game not responding, waiting 5 seconds until restart")
+                    PressAndRelease(U)
+                    time.sleep(5)
+                    if (self.notresponding("DarkSoulsIII.exe")or self.window_exists("Error")):
+                        self.kill_processes()
+                        os.system('".\\DarkSoulsIII.CT"')
+                        time.sleep(5)
+                        os.system('"C:\Program Files (x86)\Steam\steamapps\common\DARK SOULS III\Game\DarkSoulsIII.exe"')
+                        w=WindowMgr()
+                        time.sleep(40)
+                        PressAndRelease(T)
+                        PressAndRelease(I)
+                        w.find_window_wildcard(".*ARK SOULS.*")
+                        iter=0
+                        while iter<1000:
+                            try:
+                                w.set_foreground()
+                            except:
+                                print("Had issues setting to foreground")
+
+                            print("Spamming E to get into game",iter)
+                            PressAndFastRelease(E)
+                            iter+=1
+                            [ludexHp,charHp,stamina,area,targetLock]=self.readState()
+
+                            if(area==BONFIREAREA):
+                                break #we are in game
+
+                        time.sleep(5)
+                        print("Assuming in game now")
+                        PressAndRelease(T)
+                        ReleaseKey(E)
+            time.sleep(5)
+
 
     def teleToBoss(self):
         self.setDsInFocus()
-        time.sleep(2)
-        for i in range(10):
+        time.sleep(5)
+        for i in range(20):
+            self.check_responding_lock()
             PressAndRelease(F1)
-            time.sleep(1)
+            PressAndRelease(U)#Normal speed
             PressAndRelease(E)
             PressAndRelease(E)#Twice, bloodstain can be at entrance
             time.sleep(2)
@@ -121,9 +144,10 @@ class dsgym:
                 PressAndRelease(Q)
                 break
         else:   #For loop else, not if else
-                #didn't get to boss area in 10 tries, commit sudoku
+                #didn't get to boss area in 10 tries, commit sudoku and kill both processes
             PressAndRelease(F3)
-            print("Suicide, something wrong")
+            print("Couldn't get to boss in 20 tries, something wrong, killing processes as well")
+            self.kill_processes()
         
 
     def readState(self):
@@ -146,14 +170,16 @@ class dsgym:
     def can_reset(self):
         self.releaseAll()
         [ludexHp,charHp,stamina,area,targetLock]=self.readState()
-        self.CheckAndHandleNotResponding()
+        #self.CheckAndHandleNotResponding()
         return charHp !=0
 
     def kill_processes(self):
         os.system("taskkill /f /im  DarkSoulsIII.exe /T")
         # also kill cheat engine
         os.system("taskkill /f /im  cheatengine-x86_64.exe /T")
-
+    def check_responding_lock(self):
+        not_responding_lock.acquire()
+        not_responding_lock.release()
 
     def frame_step(self,input_actions):
         terminal=False
@@ -166,9 +192,9 @@ class dsgym:
         global iterations
 
         iterations+=1
-        #Todo, fix this by restarting ds? 
-        if iterations%1000==1:
-            terminal=self.CheckAndHandleNotResponding()
+
+        #Check if able to take not responding lock
+        self.check_responding_lock()
 
         #Retrieve state BossHp, CharHp and stamina
         [ludexHp,charHp,stamina,area,targetLock]=self.readState()
@@ -191,13 +217,8 @@ class dsgym:
         elif targetLock==0:
             PressAndRelease(Q)
 
-        ludexMaxHp=1037
-        charMaxHp=454
-
-        ludexNorm=ludexHp/ludexMaxHp
-        charNorm=charHp/charMaxHp
-
-        
+        #ludexMaxHp=1037
+        #harMaxHp=454
 
         self.releaseAll()
         #Input action
@@ -218,7 +239,6 @@ class dsgym:
         if input_actions==7:
             PressKey(NUM4)
         #Input action 8 is doing nothing
-
 
         if not terminal:
             #reward+=charNorm
@@ -242,19 +262,13 @@ class dsgym:
             #ReleaseKey(P)
 
         self.add_frames(1)
-
+        self.add_actions(input_actions)
         if terminal:
             self.fill_frame_buffer=True #Fill buffer next time, if we died
-
-
-
-
+            PressAndRelease(I) #speed up when dead
         bossHpLastFrame=ludexHp
         charHpLastFrame=charHp
-
-        
-
-        return LazyFrames(list(self.frames)), reward, terminal
+        return LazyFrames(list(self.frames)),np.hstack(self.prev_actions), reward, terminal
 
     def releaseAll(self):
         ReleaseKey(P)
@@ -278,20 +292,33 @@ class dsgym:
                 timeToSleep = FRAME_DIFF - elapsed
                 if timeToSleep > 0:
                     time.sleep(timeToSleep)
-                    # print("New elapsed ",time.time()-start_time)
+                    #print("New elapsed ",time.time()-start_time)
 
             grabber = Grabber(bbox=(8, 40, 808, 450))
             screen = grabber.grab()
             start_time = time.time()
-            grayscale_small = cv2.cvtColor(cv2.resize(screen, (84, 84), interpolation=cv2.INTER_AREA), cv2.COLOR_RGB2GRAY)
-            # millis = int(round(time.time() * 1000))
-            # cv2.imwrite('images/'+str(millis)+'grey.png', grayscale_small)
+            grayscale_small = cv2.cvtColor(cv2.resize(screen, (119, 70), interpolation=cv2.INTER_AREA), cv2.COLOR_RGB2GRAY)
+            #millis = int(round(time.time() * 1000))
+            #cv2.imwrite('images/'+str(millis)+'grey.png', grayscale_small)
             # if nothing in frame buffer, fill it with this frame
 
-            grayscale_small=np.reshape(grayscale_small, [84, 84, 1])
+            grayscale_small=np.reshape(grayscale_small, [119, 70, 1])
             if self.fill_frame_buffer:
                 for _ in range(4):
                     self.frames.append(grayscale_small)
-                self.fill_frame_buffer = False
+                #self.fill_frame_buffer = False done with actions instead
             else:
                 self.frames.append(grayscale_small)
+
+    def add_actions(self,action_to_add):
+        action_one_hot=np.zeros(9)
+        action_one_hot[action_to_add]=1
+
+        if self.fill_frame_buffer:
+            for _ in range(4):
+                self.prev_actions.append(action_one_hot)
+            self.fill_frame_buffer = False
+        else:
+            self.prev_actions.append(action_one_hot)
+
+
