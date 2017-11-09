@@ -16,14 +16,13 @@ def traj_segment_generator(pi, env, horizon, stochastic):
     ac = 0 # not used, just so we have the datatype
     new = True # marks if we're on first timestep of an episode
     ob,_,_ = env.frame_step(ac)
-    ob=np.reshape(ob,(84,84,4))
     cur_ep_ret = 0 # return in current episode
     cur_ep_len = 0 # len of current episode
     ep_rets = [] # returns of completed episodes in this segment
     ep_lens = [] # lengths of ...
 
     # Initialize history arrays
-    obs = np.array([ob for _ in range(horizon)])
+    obs = np.array([np.array(ob) for _ in range(horizon)])
     rews = np.zeros(horizon, 'float32')
     vpreds = np.zeros(horizon, 'float32')
     news = np.zeros(horizon, 'int32')
@@ -32,7 +31,7 @@ def traj_segment_generator(pi, env, horizon, stochastic):
 
     while True:
         prevac = ac
-        ac, vpred = pi.act(stochastic, [ob])
+        ac, vpred = pi.act(stochastic, np.array(ob).reshape((-1,119,70,4)))
         # Slight weirdness here because we need value function at time T
         # before returning segment [0, T-1] so we get the correct
         # terminal value
@@ -52,7 +51,6 @@ def traj_segment_generator(pi, env, horizon, stochastic):
         prevacs[i] = prevac
 
         ob, rew, new = env.frame_step(ac)
-        ob = np.reshape(ob, (84, 84, 4))
         rews[i] = rew
 
         cur_ep_ret += rew
@@ -101,7 +99,7 @@ def learn(env, policy_func, *,
 
     # Setup losses and stuff
     # ----------------------------------------
-    ob_space = spaces.Box(0,255,(84,84,4))
+    ob_space = spaces.Box(0,255,(119,70,4))
     ac_space = spaces.Discrete(9)
     pi = policy_func("pi", ob_space, ac_space) # Construct network for new policy
     oldpi = policy_func("oldpi", ob_space, ac_space) # Network for old policy
