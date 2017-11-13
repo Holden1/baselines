@@ -29,7 +29,7 @@ not_responding_lock=threading.Lock()
 class dsgym:
     def __init__(self):
         self.frames = deque([], maxlen=4)
-        self.prev_actions = deque([], maxlen=4)
+        self.prev_features = deque([], maxlen=4)
 
         self.fill_frame_buffer=True
         self.spawnCheckRespondingThread()
@@ -115,7 +115,7 @@ class dsgym:
                             print("Spamming E to get into game",iter)
                             PressAndFastRelease(E)
                             iter+=1
-                            [ludexHp,charHp,stamina,area,targetLock]=self.readState()
+                            [_,_,_,area,*_]=self.readState()
 
                             if(area==BONFIREAREA):
                                 break #we are in game
@@ -138,7 +138,7 @@ class dsgym:
             PressAndRelease(E)#Twice, bloodstain can be at entrance
             time.sleep(2)
             #Check whether we have entered boss area
-            [ludexHp,charHp,stamina,area,targetLock]=self.readState()
+            [_,_,_,area,*_]=self.readState()
             if(area==BOSSAREA):
                 PressAndRelease(F2)
                 PressAndRelease(Q)
@@ -154,13 +154,14 @@ class dsgym:
         hasRead=False
         while (hasRead==False):
             try:
-                [ludexHp,charHp,stamina,area,targetLock] = genfromtxt('gameInfo.txt', delimiter=',')
+                data = genfromtxt('gameInfo.txt', delimiter=',')
+                assert len(data) >0
                 hasRead = True
             except:
                 print ("Oops couldn't read")
         
         #print("LudexHp:",ludexHp,"charhp",charHp,"Stamina",stamina)
-        return ludexHp,charHp,stamina,area,targetLock
+        return data
     def reset(self):
         self.setDsInFocus()
         self.releaseAll()
@@ -169,7 +170,7 @@ class dsgym:
 
     def can_reset(self):
         self.releaseAll()
-        [ludexHp,charHp,stamina,area,targetLock]=self.readState()
+        [_,charHp,*_]=self.readState()
         #self.CheckAndHandleNotResponding()
         return charHp !=0
 
@@ -197,7 +198,7 @@ class dsgym:
         self.check_responding_lock()
 
         #Retrieve state BossHp, CharHp and stamina
-        [ludexHp,charHp,stamina,area,targetLock]=self.readState()
+        [ludexHp,charHp,stamina,area,targetLock,*feats]=self.readState()
 
         #Check if we died
         if(charHp==0 or area==BONFIREAREA):
@@ -207,7 +208,7 @@ class dsgym:
             terminal=True
             reward=-1
         #Check if we killed the boss
-        elif ludexHp==0:
+        if ludexHp==0:
             self.releaseAll()
             PressAndRelease(U)
             PressAndRelease(F3)
@@ -222,23 +223,28 @@ class dsgym:
 
         self.releaseAll()
         #Input action
-        if input_actions == 0:
+        #Handle movement
+        movement=input_actions//5
+
+        if movement == 0:
             PressKey(W)
-        if input_actions == 1:
+        if movement == 1:
             PressKey(A)
-        if input_actions == 2:
+        if movement == 2:
             PressKey(S)
-        if input_actions == 3:
+        if movement == 3:
             PressKey(D)
-        if input_actions == 4:
+        #Handle actions
+        action = input_actions % 5
+        if action == 0:
             PressKey(SPACE)
-        if input_actions == 5:
+        if action == 1:
             PressKey(NUM1)
-        if input_actions == 6:
+        if action == 2:
             PressKey(NUM2)
-        if input_actions==7:
+        if action==3:
             PressKey(NUM4)
-        #Input action 8 is doing nothing
+        #Other actions do nothing
 
         if not terminal:
             #reward+=charNorm
@@ -262,13 +268,13 @@ class dsgym:
             #ReleaseKey(P)
 
         self.add_frames(1)
-        self.add_actions(input_actions)
+        self.add_features(input_actions,[ludexHp,charHp,stamina,*feats])
         if terminal:
             self.fill_frame_buffer=True #Fill buffer next time, if we died
             PressAndRelease(I) #speed up when dead
         bossHpLastFrame=ludexHp
         charHpLastFrame=charHp
-        return LazyFrames(list(self.frames)),np.hstack(self.prev_actions), reward, terminal
+        return LazyFrames(list(self.frames)), np.hstack(self.prev_features), reward, terminal
 
     def releaseAll(self):
         ReleaseKey(P)
@@ -310,15 +316,17 @@ class dsgym:
             else:
                 self.frames.append(grayscale_small)
 
-    def add_actions(self,action_to_add):
-        action_one_hot=np.zeros(9)
+    def add_features(self, action_to_add,features_to_add):
+        action_one_hot=np.zeros(25)
         action_one_hot[action_to_add]=1
+
+        total_feature_vector=np.nan_to_num(np.hstack((action_one_hot,features_to_add)))
 
         if self.fill_frame_buffer:
             for _ in range(4):
-                self.prev_actions.append(action_one_hot)
+                self.prev_features.append(total_feature_vector)
             self.fill_frame_buffer = False
         else:
-            self.prev_actions.append(action_one_hot)
+            self.prev_features.append(total_feature_vector)
 
 

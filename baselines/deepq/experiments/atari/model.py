@@ -30,7 +30,7 @@ def model(img_in, num_actions, scope, reuse=False, layer_norm=False):
         return value_out
 
 
-def dueling_model(img_in,features, num_actions, scope, reuse=False, layer_norm=False):
+def dueling_model(img_in,features, num_actions,num_movements, scope, reuse=False, layer_norm=False):
     """As described in https://arxiv.org/abs/1511.06581"""
     with tf.variable_scope(scope, reuse=reuse):
         out = img_in
@@ -58,4 +58,18 @@ def dueling_model(img_in,features, num_actions, scope, reuse=False, layer_norm=F
             action_scores = layers.fully_connected(actions_hidden, num_outputs=num_actions, activation_fn=None)
             action_scores_mean = tf.reduce_mean(action_scores, 1)
             action_scores = action_scores - tf.expand_dims(action_scores_mean, 1)
-        return state_score + action_scores
+            action_scores = tf.expand_dims(action_scores,2)  # make additional dimension, such that add is elementwise when reshaping
+        with tf.variable_scope("movement_value"):
+            movement_hidden = layers.fully_connected(conv_out, num_outputs=512, activation_fn=None)
+            if layer_norm:
+                movement_hidden = layer_norm_fn(movement_hidden, relu=True)
+            else:
+                movement_hidden = tf.nn.relu(movement_hidden)
+            movement_scores = layers.fully_connected(movement_hidden, num_outputs=num_movements, activation_fn=None)
+            movement_scores_mean = tf.reduce_mean(movement_scores, 1)
+            movement_scores = movement_scores - tf.expand_dims(movement_scores_mean, 1)
+            movement_scores = tf.expand_dims(movement_scores,1)#make additional dimension, such that add is elementwise when reshaping
+
+        action_gathered=tf.reshape(tf.add(action_scores,movement_scores),[-1,num_actions*num_movements])
+        bla=state_score + action_gathered
+        return bla

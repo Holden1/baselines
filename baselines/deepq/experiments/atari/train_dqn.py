@@ -34,7 +34,9 @@ from baselines.common.azure_utils import Container
 from baselines.deepq.experiments.atari.model import model, dueling_model
 from gameState import dsgym
 
-ACTIONS = 9  # Now also action for doing nothing
+ACTIONS = 5  # Now also action for doing nothing
+MOVEMENT_ACTIONS=5
+NUM_FEATURES=(ACTIONS*MOVEMENT_ACTIONS+7) * 4
 MAX_NUM_TRAIN_ITERATIONS=100
 
 def parse_args():
@@ -261,16 +263,17 @@ if __name__ == '__main__':
 
     with U.make_session(4) as sess:
         # Create training graph and replay buffer
-        def model_wrapper(img_in, features, num_actions, scope, **kwargs):
+        def model_wrapper(img_in, features, num_actions,num_movements, scope, **kwargs):
             actual_model = dueling_model if args.dueling else model
-            return actual_model(img_in, features, num_actions, scope, layer_norm=args.layer_norm, **kwargs)
+            return actual_model(img_in, features, num_actions,num_movements, scope, layer_norm=args.layer_norm, **kwargs)
 
 
         act, train, update_target, debug = deepq.build_train(
             make_obs_ph=lambda name: U.Uint8Input((119, 70, 4), name=name),
-            make_feature_ph=lambda name: U.Uint8Input((9 * 4,), name=name),
+            make_feature_ph=lambda name: U.Uint8Input((NUM_FEATURES,), name=name),
             q_func=model_wrapper,
             num_actions=ACTIONS,
+            num_movements=MOVEMENT_ACTIONS,
             optimizer=tf.train.AdamOptimizer(learning_rate=args.lr, epsilon=1e-4),
             gamma=0.99,
             grad_norm_clipping=10,
@@ -315,11 +318,11 @@ if __name__ == '__main__':
         start_time, start_steps = None, None
         steps_per_iter = RunningAvg(0.999)
         iteration_time_est = RunningAvg(0.999)
-        obs, feats, rew, done = gymenv.frame_step(6)
+        obs, feats, rew, done = gymenv.frame_step(24)
         # print("Done------------------- : ",done)
         if done:
             gymenv.reset()
-            obs, feats, rew, done = gymenv.frame_step(6)
+            obs, feats, rew, done = gymenv.frame_step(24)
         num_iters_since_reset = 0
         reset = True
         info = {"steps": 0, "rewards": []}
@@ -413,7 +416,7 @@ if __name__ == '__main__':
                 # print("Inside done")
                 steps_left = args.num_steps - info["steps"]
                 completion = np.round(info["steps"] / args.num_steps, 1)
-                q_vals = debug["q_values"](np.asarray(obs).reshape(-1, 119, 70, 4), np.asarray(feats).reshape(-1, 36))
+                q_vals = debug["q_values"](np.asarray(obs).reshape(-1, 119, 70, 4), np.asarray(feats).reshape(-1, NUM_FEATURES))
 
                 logger.record_tabular("max q", np.max(q_vals))
                 logger.record_tabular("avg q", np.mean(q_vals))

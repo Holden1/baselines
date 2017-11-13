@@ -272,8 +272,8 @@ def set_value(v, val):
 
 
 def load_state(fname):
-    #saver = tf.train.Saver(tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope='deepq/q_func/convnet'))
-    saver = tf.train.Saver()
+    saver = tf.train.Saver(tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope='deepq/q_func/convnet'))
+    #saver = tf.train.Saver()
     saver.restore(get_session(), fname)
 
 
