@@ -31,4 +31,5 @@ src
 *.egg-info
 .cache
 
-baselines/deepq/experiments/atari/gameInfo\.txt
+MUJOCO_LOG.TXT
+

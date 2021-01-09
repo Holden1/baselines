@@ -1,1 +1,1 @@
-??,??,??,??,??
+targetedEntityHp::??;;targetedEntityX::??;;targetedEntityY::??;;targetedEntityZ::??;;targetedEntityAngle::??;;heroHp::454;;heroX::102.0386963;;heroY::505.9754333;;heroZ::-48.87284088;;heroAngle::1.087241173;;targetLock::47216;;locationArea::400101

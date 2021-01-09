@@ -2,7 +2,7 @@ from collections import deque
 
 import numpy as np
 import win32ui
-from baselines.common.atari_wrappers_deprecated import LazyFrames
+from baselines.common.atari_wrappers import LazyFrames
 from grabber import Grabber
 import cv2
 import time
@@ -14,10 +14,11 @@ from windowMgr import WindowMgr
 import os
 import subprocess
 import threading
+from gym import spaces
 
 
-BOSSAREA=400100
-BONFIREAREA=400101
+BOSSAREA="400100"
+BONFIREAREA="400101"
 FRAME_DIFF=0.02
 
 iterations=0
@@ -26,13 +27,34 @@ bossHpLastFrame=sys.maxsize
 charHpLastFrame=-sys.maxsize
 not_responding_lock=threading.Lock()
 
+areaKey="locationArea"
+charHpKey="heroHp"
+bossHpKey="targetedEntityHp"
+
+
+def parse_val(value):
+    try:
+        val=float(value)
+        return val
+    except ValueError:
+        if value=="??":
+            return 0
+        return value
+
 class dsgym:
+    observation_space=spaces.Box(0,255,shape=(119,70,4))
+    action_space=spaces.Discrete(9)
     def __init__(self):
         self.frames = deque([], maxlen=4)
         self.prev_actions = deque([], maxlen=4)
 
         self.fill_frame_buffer=True
         self.spawnCheckRespondingThread()
+        self.logfile = open("gameInfo.txt", "r", encoding="utf-8")
+
+
+    def unpause_wrapper(self):
+        PressAndRelease(U)
 
     def pause_wrapper(self):
         PressAndRelease(P)
@@ -99,7 +121,7 @@ class dsgym:
                         self.kill_processes()
                         os.system('".\\DarkSoulsIII.CT"')
                         time.sleep(5)
-                        os.system('"C:\Program Files (x86)\Steam\steamapps\common\DARK SOULS III\Game\DarkSoulsIII.exe"')
+                        os.system('"F:\SteamLibrary\steamapps\common\DARK SOULS III\Game\DarkSoulsIII.exe"')
                         w=WindowMgr()
                         time.sleep(40)
                         PressAndRelease(T)
@@ -115,9 +137,9 @@ class dsgym:
                             print("Spamming E to get into game",iter)
                             PressAndFastRelease(E)
                             iter+=1
-                            [ludexHp,charHp,stamina,area,targetLock]=self.readState()
+                            stateDict=self.readState()
 
-                            if(area==BONFIREAREA):
+                            if(stateDict[areaKey]==BONFIREAREA):
                                 break #we are in game
 
                         time.sleep(5)
@@ -138,8 +160,8 @@ class dsgym:
             PressAndRelease(E)#Twice, bloodstain can be at entrance
             time.sleep(2)
             #Check whether we have entered boss area
-            [ludexHp,charHp,stamina,area,targetLock]=self.readState()
-            if(area==BOSSAREA):
+            stateDict=self.readState()
+            if(stateDict[areaKey]==BOSSAREA):
                 PressAndRelease(F2)
                 PressAndRelease(Q)
                 break
@@ -148,19 +170,41 @@ class dsgym:
             PressAndRelease(F3)
             print("Couldn't get to boss in 20 tries, something wrong, killing processes as well")
             self.kill_processes()
-        
+
+    def kill_or_wait(self,start_read):
+        elapsed = int(time.time() - start_read)
+        max_wait_time = 30
+        print("waiting for loading screen", elapsed, " of max", max_wait_time)
+        if elapsed >= max_wait_time:
+            self.kill_processes()
+            # wait for restart thread to pick it up, then wait for lock
+            time.sleep(10)
+            self.check_responding_lock()
+        else:
+            time.sleep(1)
+
+
 
     def readState(self):
         hasRead=False
+        start_read=time.time()
+
         while (hasRead==False):
-            try:
-                [ludexHp,charHp,stamina,area,targetLock] = genfromtxt('gameInfo.txt', delimiter=',')
-                hasRead = True
-            except:
-                print ("Oops couldn't read")
-        
-        #print("LudexHp:",ludexHp,"charhp",charHp,"Stamina",stamina)
-        return ludexHp,charHp,stamina,area,targetLock
+            self.logfile.seek(0)
+            loglines = self.logfile.readline()
+            if not loglines or len(loglines.split(";;"))<4:
+                continue
+            stateDict= {}
+            for line in loglines.split(";;"):
+                try:
+                    (key,val) = line.split("::")
+                    stateDict[key]=val
+                except:
+                    continue
+
+            hasRead = True
+            print("read state")
+        return stateDict
     def reset(self):
         self.setDsInFocus()
         self.releaseAll()
@@ -169,9 +213,9 @@ class dsgym:
 
     def can_reset(self):
         self.releaseAll()
-        [ludexHp,charHp,stamina,area,targetLock]=self.readState()
+        stateDict=self.readState()
         #self.CheckAndHandleNotResponding()
-        return charHp !=0
+        return stateDict[charHpKey] !=0
 
     def kill_processes(self):
         os.system("taskkill /f /im  DarkSoulsIII.exe /T")
@@ -196,29 +240,26 @@ class dsgym:
         #Check if able to take not responding lock
         self.check_responding_lock()
 
-        #Retrieve state BossHp, CharHp and stamina
-        [ludexHp,charHp,stamina,area,targetLock]=self.readState()
-
+        stateDict = self.readState()
         #Check if we died
-        if(charHp==0 or area==BONFIREAREA):
+        print(stateDict[areaKey])
+        if(stateDict[charHpKey]==0 or stateDict[areaKey]==BONFIREAREA or stateDict[areaKey]=="??"):
             #Unpause game and wait for hp>0
             self.releaseAll()
             PressAndRelease(U)
             terminal=True
             reward=-1
-        #Check if we killed the boss
-        elif ludexHp==0:
+        #Check if we killed the boss or missing boss into
+        elif stateDict[bossHpKey]==0 or stateDict[bossHpKey]=="??":
             self.releaseAll()
+            print("killed boss")
             PressAndRelease(U)
             PressAndRelease(F3)
             terminal=True
             reward=1
         #Check if lost target on boss
-        elif targetLock==0:
+        elif stateDict["targetLock"]==0:
             PressAndRelease(Q)
-
-        #ludexMaxHp=1037
-        #harMaxHp=454
 
         self.releaseAll()
         #Input action
@@ -241,34 +282,23 @@ class dsgym:
         #Input action 8 is doing nothing
 
         if not terminal:
-            #reward+=charNorm
-            #reward-=ludexNorm
-            #If we dealt damage to boss since last frame_step
-            if bossHpLastFrame>ludexHp:
-                #Give reward according to %damage dealt
-                #reward+=(bossHpLastFrame-ludexHp)/ludexMaxHp
+            if bossHpLastFrame>int(stateDict[bossHpKey]):
                 reward+=1
             #If our hp is lower than last frame
-            elif charHp<charHpLastFrame:
-                #Lose reward accoring to %health lost
-                #reward-=(charHpLastFrame-charHp)/charMaxHp
+            elif int(stateDict[charHpKey])<int(charHpLastFrame):
                 reward-=1
-            #high value of stamina means we've run out
-            #Penalize running out of stamina
-            #Outcommented for now
-            #if(stamina==0 or stamina>10000):
-            #   reward-=1
-            #PressKey(P)
-            #ReleaseKey(P)
+
+            bossHpLastFrame=int(stateDict[bossHpKey])
+            charHpLastFrame=int(stateDict[charHpKey])
+
 
         self.add_frames(1)
         self.add_actions(input_actions)
         if terminal:
             self.fill_frame_buffer=True #Fill buffer next time, if we died
             PressAndRelease(I) #speed up when dead
-        bossHpLastFrame=ludexHp
-        charHpLastFrame=charHp
-        return LazyFrames(list(self.frames)),np.hstack(self.prev_actions), reward, terminal
+        
+        return LazyFrames(list(self.frames)), reward, terminal
 
     def releaseAll(self):
         ReleaseKey(P)

@@ -1,45 +1,52 @@
 #!/usr/bin/env python
 import sys
-
+import argparse
+from baselines import bench, logger
 import time
-from mpi4py import MPI
-from baselines.common import set_global_seeds
-from baselines import bench
-import os.path as osp
-import gym, logging
-from baselines import logger
 from gameState import dsgym
 
-def wrap_train(env):
-    from baselines.common.atari_wrappers import (wrap_deepmind, FrameStack)
-    env = wrap_deepmind(env, clip_rewards=True)
-    env = FrameStack(env, 4)
-    return env
-
-def train(env_id, num_frames, seed):
+def train(env_id, num_timesteps, seed, policy):
+    from baselines.common import set_global_seeds
+    from baselines.common.atari_wrappers import make_atari, wrap_deepmind
+    from baselines.common.vec_env.subproc_vec_env import SubprocVecEnv
+    from baselines.common.vec_env.vec_frame_stack import VecFrameStack
     from baselines.ppo2 import ppo2
     from baselines.ppo2.policies import CnnPolicy, LstmPolicy, LnLstmPolicy
+    import gym
+    import logging
+    import multiprocessing
+    import os.path as osp
+    import tensorflow as tf
     import baselines.common.tf_util as U
-    rank = MPI.COMM_WORLD.Get_rank()
-    sess = U.single_threaded_session()
-    sess.__enter__()
-    if rank != 0: logger.set_level(logger.DISABLED)
-    workerseed = seed + 10000 * MPI.COMM_WORLD.Get_rank()
-    set_global_seeds(workerseed)
-    def policy_fn(name, ob_space, ac_space): #pylint: disable=W0613
-        return CnnPolicy
+    ncpu = multiprocessing.cpu_count()
+    if sys.platform == 'darwin': ncpu //= 2
+    config = tf.ConfigProto(allow_soft_placement=True,
+                            intra_op_parallelism_threads=ncpu,
+                            inter_op_parallelism_threads=ncpu)
+    config.gpu_options.allow_growth = True #pylint: disable=E1101
     gym.logger.setLevel(logging.WARN)
-    num_timesteps = int(num_frames / 4 * 1.1)
+    tf.Session(config=config).__enter__()
+
+    def make_env(rank):
+        def env_fn():
+            env = make_atari(env_id)
+            env.seed(seed + rank)
+            env = bench.Monitor(env, logger.get_dir() and osp.join(logger.get_dir(), str(rank)))
+            return wrap_deepmind(env)
+        return env_fn
+    nenvs = 1
+    #env = SubprocVecEnv([dsgym() for i in range(nenvs)])
+    set_global_seeds(seed)
+    #env = VecFrameStack(env, 4)
+    policy = {'cnn' : CnnPolicy, 'lstm' : LstmPolicy, 'lnlstm' : LnLstmPolicy}[policy]
     try:
-        ppo2.learn(dsgym(), policy_fn,
-            max_timesteps=num_timesteps,
-            timesteps_per_batch=256,
-            clip_param=0.2, entcoeff=0.01,
-            optim_epochs=4, optim_stepsize=1e-3, optim_batchsize=64,
-            gamma=0.99, lam=0.95,
-            schedule='linear'
-        )
-    except KeyboardInterrupt:
+        ppo2.learn(policy=policy, env=dsgym(), nsteps=128, nminibatches=4,
+            lam=0.95, gamma=0.99, noptepochs=4, log_interval=1,
+            ent_coef=.01,
+            lr=lambda f : f * 2.5e-4,
+            cliprange=lambda f : f * 0.1,
+            total_timesteps=int(num_timesteps * 1.1))
+    except:
         print("Saving on keyinterrupt")
         U.save_state("D:/openAi/ppo/" +str(time.time())+ "/saved_model")
         # quit
@@ -47,12 +54,15 @@ def train(env_id, num_frames, seed):
     U.save_state("D:/openAi/ppo/" +str(time.time()) + "/saved_model")
 
 def main():
-    import argparse
     parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument('--env', help='environment ID', default='Darksouls')
     parser.add_argument('--seed', help='RNG seed', type=int, default=0)
+    parser.add_argument('--policy', help='Policy architecture', choices=['cnn', 'lstm', 'lnlstm'], default='cnn')
+    parser.add_argument('--num-timesteps', type=int, default=int(10e6))
     args = parser.parse_args()
-    train(args.env, num_frames=40e6, seed=args.seed)
+    logger.configure()
+    train(args.env, num_timesteps=args.num_timesteps, seed=args.seed,
+        policy=args.policy)
 
 if __name__ == '__main__':
     main()

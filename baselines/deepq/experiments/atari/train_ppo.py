@@ -7,7 +7,7 @@ from baselines.common import set_global_seeds
 from baselines import bench
 import os.path as osp
 import gym, logging
-from baselines import logger
+#from baselines import logger
 from gameState import dsgym
 
 def wrap_train(env):
@@ -32,7 +32,7 @@ def train(env_id, num_frames, seed):
     try:
         pposgd_simple.learn(dsgym(), policy_fn,
             max_timesteps=num_timesteps,
-            timesteps_per_batch=256,
+            timesteps_per_actorbatch=256,
             clip_param=0.2, entcoeff=0.01,
             optim_epochs=4, optim_stepsize=1e-3, optim_batchsize=64,
             gamma=0.99, lam=0.95,
