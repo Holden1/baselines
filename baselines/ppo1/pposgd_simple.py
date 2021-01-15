@@ -15,7 +15,7 @@ def traj_segment_generator(pi, env, horizon, stochastic):
     t = 0
     ac = 0 # not used, just so we have the datatype
     new = True # marks if we're on first timestep of an episode
-    ob,_,_ = env.frame_step(ac)
+    ob,_,_ = env.frame_step(8)
     cur_ep_ret = 0 # return in current episode
     cur_ep_len = 0 # len of current episode
     ep_rets = [] # returns of completed episodes in this segment
@@ -28,14 +28,17 @@ def traj_segment_generator(pi, env, horizon, stochastic):
     news = np.zeros(horizon, 'int32')
     acs = np.array([ac for _ in range(horizon)])
     prevacs = acs.copy()
+    can_train=False
 
     while True:
         prevac = ac
-        ac, vpred = pi.act(stochastic, np.array(ob).reshape((-1,119,70,4)))
+        ac, vpred = pi.act(stochastic,ob)
         # Slight weirdness here because we need value function at time T
         # before returning segment [0, T-1] so we get the correct
         # terminal value
         if t > 0 and t % horizon == 0:
+            can_train=True
+        if new and can_train:
             yield {"ob" : obs, "rew" : rews, "vpred" : vpreds, "new" : news,
                     "ac" : acs, "prevac" : prevacs, "nextvpred": vpred * (1 - new),
                     "ep_rets" : ep_rets, "ep_lens" : ep_lens}
@@ -43,6 +46,12 @@ def traj_segment_generator(pi, env, horizon, stochastic):
             # several of these batches, then be sure to do a deepcopy
             ep_rets = []
             ep_lens = []
+            can_train=False
+        if new:
+            while not env.can_reset():
+                time.sleep(1)
+            env.reset()
+
         i = t % horizon
         obs[i] = ob
         vpreds[i] = vpred
@@ -60,9 +69,7 @@ def traj_segment_generator(pi, env, horizon, stochastic):
             ep_lens.append(cur_ep_len)
             cur_ep_ret = 0
             cur_ep_len = 0
-            while not env.can_reset():
-                time.sleep(1)
-            env.reset()
+            
         t += 1
 
 def add_vtarg_and_adv(seg, gamma, lam):
@@ -99,7 +106,7 @@ def learn(env, policy_func, *,
 
     # Setup losses and stuff
     # ----------------------------------------
-    ob_space = spaces.Box(0,255,(119,70,4))
+    ob_space = env.observation_space
     ac_space = spaces.Discrete(9)
     pi = policy_func("pi", ob_space, ac_space) # Construct network for new policy
     oldpi = policy_func("oldpi", ob_space, ac_space) # Network for old policy
@@ -170,10 +177,10 @@ def learn(env, policy_func, *,
             raise NotImplementedError
 
         #logger.log("********** Iteration %i ************"%iters_so_far)
-        env.unpause_wrapper()
+        #env.unpause_wrapper()
         seg = seg_gen.__next__()
-        print("Pause for training")
-        env.pause_wrapper()
+        print("Training")
+        #env.pause_wrapper()
         add_vtarg_and_adv(seg, gamma, lam)
 
         # ob, ac, atarg, ret, td1ret = map(np.concatenate, (obs, acs, atargs, rets, td1rets))

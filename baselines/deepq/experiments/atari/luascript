@@ -7,7 +7,7 @@ t=createTimer(nil)
 function startTimer()
 
   t.OnTimer=debugger_onBreakpoint
-  t.Interval=1000
+  t.Interval=100
   t.Enabled=true
 end
 
@@ -16,7 +16,9 @@ function debugger_onBreakpoint()
     addList=getAddressList()
 
     printList= {"targetedEntityHp","targetedEntityX","targetedEntityY","targetedEntityZ","targetedEntityAngle",
-                "heroHp","heroX","heroY","heroZ","heroAngle","targetLock","locationArea"}
+                "targetComboAttack","targetAttack1","targetAttack2","targetMovement1","targetMovement2",
+                "targetAnimationName",
+                "heroHp","heroX","heroY","heroSp","heroZ","heroAngle","targetLock","locationArea"}
 
     file = io.open(".\\gameInfo.txt", "w")
     currentHeritage={}
@@ -24,7 +26,7 @@ function debugger_onBreakpoint()
     --Purposefully skip first element
     for i=1,#printList do
         record=addList.getMemoryRecordByDescription(printList[i])
-           
+
                       if i ~= #printList
                       then
                           file:write(record.Description,"::",record.Value,";;")
@@ -42,4 +44,4 @@ function debugger_onBreakpoint()
 end
 
 
-debugger_onBreakpoint()
+startTimer()

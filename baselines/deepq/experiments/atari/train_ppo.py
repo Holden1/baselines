@@ -7,7 +7,7 @@ from baselines.common import set_global_seeds
 from baselines import bench
 import os.path as osp
 import gym, logging
-#from baselines import logger
+from baselines import logger
 from gameState import dsgym
 
 def wrap_train(env):
@@ -17,7 +17,7 @@ def wrap_train(env):
     return env
 
 def train(env_id, num_frames, seed):
-    from baselines.ppo1 import pposgd_simple, cnn_policy
+    from baselines.ppo1 import pposgd_simple, cnn_policy, mlp_policy
     import baselines.common.tf_util as U
     rank = MPI.COMM_WORLD.Get_rank()
     sess = U.single_threaded_session()
@@ -26,7 +26,7 @@ def train(env_id, num_frames, seed):
     workerseed = seed + 10000 * MPI.COMM_WORLD.Get_rank()
     set_global_seeds(workerseed)
     def policy_fn(name, ob_space, ac_space): #pylint: disable=W0613
-        return cnn_policy.CnnPolicy(name=name, ob_space=ob_space, ac_space=ac_space)
+        return  mlp_policy.MlpPolicy(name=name, ob_space=ob_space, ac_space=ac_space,hid_size=64, num_hid_layers=2)
     gym.logger.setLevel(logging.WARN)
     num_timesteps = int(num_frames / 4 * 1.1)
     try:

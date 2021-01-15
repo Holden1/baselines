@@ -15,6 +15,7 @@ import os
 import subprocess
 import threading
 from gym import spaces
+import math
 
 
 BOSSAREA="400100"
@@ -31,6 +32,9 @@ areaKey="locationArea"
 charHpKey="heroHp"
 bossHpKey="targetedEntityHp"
 
+num_state_scalars=26
+num_history_states=100
+
 
 def parse_val(value):
     try:
@@ -42,26 +46,35 @@ def parse_val(value):
         return value
 
 class dsgym:
-    observation_space=spaces.Box(0,255,shape=(119,70,4))
+    
+    observation_space=spaces.Box(-100,1000,num_history_states*num_state_scalars)
     action_space=spaces.Discrete(9)
     def __init__(self):
         self.frames = deque([], maxlen=4)
         self.prev_actions = deque([], maxlen=4)
 
+        
+        self.prev_state = deque([], maxlen=num_history_states)
+
         self.fill_frame_buffer=True
         self.spawnCheckRespondingThread()
         self.logfile = open("gameInfo.txt", "r", encoding="utf-8")
 
+        self.paused=False
+
 
     def unpause_wrapper(self):
-        PressAndRelease(U)
+        if(self.paused):
+            PressAndFastRelease(U)
+            self.paused=False
 
     def pause_wrapper(self):
         PressAndRelease(P)
+        self.paused=True
     def speed_up_wrapper(self):
         PressAndRelease(I)
     def normal_speed_wrapper(self):
-        PressAndRelease(U)
+        PressAndFastRelease(U)
 
     def notresponding(self,name):
         #os.system('tasklist /FI "IMAGENAME eq %s" /FI "STATUS eq not responding" > tmp.txt' % name)
@@ -203,7 +216,6 @@ class dsgym:
                     continue
 
             hasRead = True
-            print("read state")
         return stateDict
     def reset(self):
         self.setDsInFocus()
@@ -236,14 +248,14 @@ class dsgym:
         global iterations
 
         iterations+=1
-
+        self.unpause_wrapper()
         #Check if able to take not responding lock
+        
         self.check_responding_lock()
 
         stateDict = self.readState()
         #Check if we died
-        print(stateDict[areaKey])
-        if(stateDict[charHpKey]==0 or stateDict[areaKey]==BONFIREAREA or stateDict[areaKey]=="??"):
+        if(stateDict[charHpKey]=="0" or stateDict[areaKey]==BONFIREAREA or stateDict[areaKey]=="??"):
             #Unpause game and wait for hp>0
             self.releaseAll()
             PressAndRelease(U)
@@ -293,12 +305,12 @@ class dsgym:
 
 
         self.add_frames(1)
-        self.add_actions(input_actions)
+        self.add_state(input_actions,stateDict)
         if terminal:
             self.fill_frame_buffer=True #Fill buffer next time, if we died
             PressAndRelease(I) #speed up when dead
         
-        return LazyFrames(list(self.frames)), reward, terminal
+        return np.hstack(self.prev_state), reward, terminal
 
     def releaseAll(self):
         ReleaseKey(P)
@@ -350,5 +362,55 @@ class dsgym:
             self.fill_frame_buffer = False
         else:
             self.prev_actions.append(action_one_hot)
+
+    def parseStateDictValue(self,stateDict,key):
+        if (stateDict[key]=="??"):
+            return 0
+        else:
+            return float(stateDict[key])
+    def calc_dist(self,targetx,targety,herox,heroy):
+        return math.sqrt((targetx-herox)**2+(targety-heroy)**2)
+
+    def add_state(self,action_to_add,stateDict):
+        targetX=self.parseStateDictValue(stateDict,"targetedEntityX")
+        targetY=self.parseStateDictValue(stateDict,"targetedEntityY")
+        heroX=self.parseStateDictValue(stateDict,"heroX")
+        heroY=self.parseStateDictValue(stateDict,"heroY")
+
+        stateToAdd=np.zeros(num_state_scalars)
+        stateToAdd[action_to_add]=1
+        if(stateDict["targetAnimationName"])=="DamageParryEnemy1":
+            stateToAdd[9]=1
+        stateToAdd[10]=self.parseStateDictValue(stateDict,"targetedEntityHp")
+        stateToAdd[11]=targetX
+        stateToAdd[12]=targetY
+        stateToAdd[13]=self.parseStateDictValue(stateDict,"targetedEntityZ")
+        stateToAdd[14]=self.parseStateDictValue(stateDict,"targetedEntityAngle")
+        stateToAdd[15]=self.parseStateDictValue(stateDict,"targetAttack1")
+        if(float(self.parseStateDictValue(stateDict,"targetAttack2"))>3000):
+            stateToAdd[16]=float(self.parseStateDictValue(stateDict,"targetAttack2"))-3000
+        else:
+            stateToAdd[16]=float(self.parseStateDictValue(stateDict,"targetAttack2"))
+        stateToAdd[17]=self.parseStateDictValue(stateDict,"targetMovement1")
+        stateToAdd[18]=self.parseStateDictValue(stateDict,"targetMovement2")
+        stateToAdd[19]=self.parseStateDictValue(stateDict,"targetComboAttack")
+        stateToAdd[20]=self.parseStateDictValue(stateDict,"heroHp")
+        stateToAdd[21]=heroX
+        stateToAdd[22]=heroY
+
+        dist=self.calc_dist(targetX,targetY,heroX,heroY)
+        print("dist",dist)
+
+        stateToAdd[23]=dist
+        stateToAdd[24]=self.parseStateDictValue(stateDict,"heroAngle")
+        stateToAdd[25]=self.parseStateDictValue(stateDict,"heroSp")
+
+        print("State",stateToAdd)
+        if self.fill_frame_buffer:
+            for _ in range(num_history_states):
+                self.prev_state.append(stateToAdd)
+            self.fill_frame_buffer = False
+        else:
+            self.prev_state.append(stateToAdd)
 
 
