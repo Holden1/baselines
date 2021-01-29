@@ -1,5 +1,5 @@
 from collections import deque
-
+from os import system
 import numpy as np
 import win32ui
 from baselines.common.atari_wrappers import LazyFrames
@@ -20,7 +20,7 @@ import math
 
 BOSSAREA="400100"
 BONFIREAREA="400101"
-FRAME_DIFF=0.02
+FRAME_DIFF=0.05
 
 iterations=0
 start_time=-1
@@ -32,7 +32,7 @@ areaKey="locationArea"
 charHpKey="heroHp"
 bossHpKey="targetedEntityHp"
 
-num_state_scalars=26
+num_state_scalars=27
 num_history_states=100
 
 
@@ -47,7 +47,7 @@ def parse_val(value):
 
 class dsgym:
     
-    observation_space=spaces.Box(-100,1000,num_history_states*num_state_scalars)
+    observation_space=spaces.Box(-100,1000,shape=(num_history_states*num_state_scalars,))
     action_space=spaces.Discrete(9)
     def __init__(self):
         self.frames = deque([], maxlen=4)
@@ -254,6 +254,8 @@ class dsgym:
         self.check_responding_lock()
 
         stateDict = self.readState()
+        #self.print_state_dict(stateDict)
+        self.ensure_framerate()
         #Check if we died
         if(stateDict[charHpKey]=="0" or stateDict[areaKey]==BONFIREAREA or stateDict[areaKey]=="??"):
             #Unpause game and wait for hp>0
@@ -262,7 +264,7 @@ class dsgym:
             terminal=True
             reward=-1
         #Check if we killed the boss or missing boss into
-        elif stateDict[bossHpKey]==0 or stateDict[bossHpKey]=="??":
+        elif stateDict[bossHpKey]=="0" or stateDict[bossHpKey]=="??":
             self.releaseAll()
             print("killed boss")
             PressAndRelease(U)
@@ -270,8 +272,9 @@ class dsgym:
             terminal=True
             reward=1
         #Check if lost target on boss
-        elif stateDict["targetLock"]==0:
+        elif stateDict["targetLock"]=="0":
             PressAndRelease(Q)
+            print("Lost target, retargeting")
 
         self.releaseAll()
         #Input action
@@ -303,9 +306,9 @@ class dsgym:
             bossHpLastFrame=int(stateDict[bossHpKey])
             charHpLastFrame=int(stateDict[charHpKey])
 
-
-        self.add_frames(1)
+        stateDict["reward"]=reward
         self.add_state(input_actions,stateDict)
+        
         if terminal:
             self.fill_frame_buffer=True #Fill buffer next time, if we died
             PressAndRelease(I) #speed up when dead
@@ -324,33 +327,16 @@ class dsgym:
         ReleaseKey(NUM2)
         ReleaseKey(NUM4)
 
-    def add_frames(self,num_frames):
+    def ensure_framerate(self):
         global start_time
-        for i in range(num_frames):
-            # Sleep to ensure consistency in frames
-            if start_time != -1:
-                elapsed = time.time() - start_time
-                # print(elapsed)
-                timeToSleep = FRAME_DIFF - elapsed
-                if timeToSleep > 0:
-                    time.sleep(timeToSleep)
-                    #print("New elapsed ",time.time()-start_time)
-
-            grabber = Grabber(bbox=(8, 40, 808, 450))
-            screen = grabber.grab()
-            start_time = time.time()
-            grayscale_small = cv2.cvtColor(cv2.resize(screen, (119, 70), interpolation=cv2.INTER_AREA), cv2.COLOR_RGB2GRAY)
-            #millis = int(round(time.time() * 1000))
-            #cv2.imwrite('images/'+str(millis)+'grey.png', grayscale_small)
-            # if nothing in frame buffer, fill it with this frame
-
-            grayscale_small=np.reshape(grayscale_small, [119, 70, 1])
-            if self.fill_frame_buffer:
-                for _ in range(4):
-                    self.frames.append(grayscale_small)
-                #self.fill_frame_buffer = False done with actions instead
-            else:
-                self.frames.append(grayscale_small)
+         # Sleep to ensure consistency in frames
+        if start_time != -1:
+            elapsed = time.time() - start_time
+            timeToSleep = FRAME_DIFF - elapsed
+            if timeToSleep > 0:
+                time.sleep(timeToSleep)
+                #print("New elapsed ",time.time()-start_time)
+        start_time = time.time()
 
     def add_actions(self,action_to_add):
         action_one_hot=np.zeros(9)
@@ -367,9 +353,14 @@ class dsgym:
         if (stateDict[key]=="??"):
             return 0
         else:
-            return float(stateDict[key])
+            return float(stateDict[key].replace(",","."))
     def calc_dist(self,targetx,targety,herox,heroy):
         return math.sqrt((targetx-herox)**2+(targety-heroy)**2)
+
+    def print_state_dict(self,stateDict):
+        _ = system('cls') 
+        for k in stateDict:
+            print (k,stateDict[k])
 
     def add_state(self,action_to_add,stateDict):
         targetX=self.parseStateDictValue(stateDict,"targetedEntityX")
@@ -399,13 +390,12 @@ class dsgym:
         stateToAdd[22]=heroY
 
         dist=self.calc_dist(targetX,targetY,heroX,heroY)
-        print("dist",dist)
-
         stateToAdd[23]=dist
         stateToAdd[24]=self.parseStateDictValue(stateDict,"heroAngle")
         stateToAdd[25]=self.parseStateDictValue(stateDict,"heroSp")
+        stateToAdd[26]=stateDict["reward"]
 
-        print("State",stateToAdd)
+        #print(stateToAdd)
         if self.fill_frame_buffer:
             for _ in range(num_history_states):
                 self.prev_state.append(stateToAdd)
